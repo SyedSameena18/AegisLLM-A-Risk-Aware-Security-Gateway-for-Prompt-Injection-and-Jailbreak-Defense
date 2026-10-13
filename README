@@ -1,1 +1,5 @@
-AEGISLLM
+# AegisLLM
+
+A risk-aware security gateway that protects LLM applications from prompt injection and jailbreak attacks.
+
+AegisLLM sits between users and any LLM. Every request is analyzed first, given a risk score, and then allowed, sent for review, or blocked, before the LLM ever sees it. The LLM's answer is also checked before it goes back to the user.
