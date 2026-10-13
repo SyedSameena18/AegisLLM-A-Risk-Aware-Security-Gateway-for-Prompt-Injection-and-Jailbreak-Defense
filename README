@@ -1,5 +1,156 @@
 # AegisLLM
 
-A risk-aware security gateway that protects LLM applications from prompt injection and jailbreak attacks.
+**A risk-aware security gateway that protects LLM applications from prompt injection and jailbreak attacks.**
 
 AegisLLM sits between users and any LLM. Every request is analyzed first, given a risk score, and then allowed, sent for review, or blocked, before the LLM ever sees it. The LLM's answer is also checked before it goes back to the user.
+
+> **Project status: early development.** The API contract, config validation, fail-closed handling and tests are done. Detection (preprocessor, rules, ML) is still being built. See [Status](#status).
+
+---
+## Why this project
+
+LLM apps can be attacked with text alone:
+- **Direct prompt injection:** "Ignore previous instructions and..."
+- **Jailbreaks:** role-play or "no rules" personas
+- **System prompt extraction:** tricking the model into revealing hidden instructions
+- **Obfuscated attacks:** Base64, leetspeak, invisible characters
+- **Indirect injection:** malicious instructions hidden inside documents, web pages or retrieved content
+
+Relying on the LLM to defend itself is not enough. AegisLLM adds a separate, explainable, model-independent security layer in front of it.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Client] --> B[FastAPI Gateway]
+    B --> C[Preprocessor]
+    C --> D[Rule Engine]
+    C --> E[ML Detector]
+    D --> F[Risk Engine]
+    E --> F
+    F --> G{Decision}
+    G -->|ALLOW| H[LLM Service]
+    G -->|REVIEW| I[Review required - LLM not called]
+    G -->|BLOCK| J[Blocked - LLM not called]
+    H --> K[Output Validator]
+    K --> L[Response]
+    B -.-> M[(PostgreSQL audit log)]
+    M -.-> N[React Dashboard]
+```
+
+1. **Preprocessor:** keeps the original prompt, normalizes Unicode, flags invisible characters, and detects possible encodings in a separate step.
+2. **Rule engine:** YAML-based rules with IDs and categories (instruction override, jailbreak, prompt extraction, exfiltration).
+3. **ML detector:** TF-IDF + Logistic Regression baseline. A stronger model is kept only if it clearly beats the baseline.
+4. **Risk engine:** combines signals (each on a 0-100 scale) into one risk score. Weights and thresholds are tuned on validation data.
+5. **Decision engine:** `ALLOW`, `REVIEW` or `BLOCK` using configurable thresholds.
+6. **LLM service:** provider-independent interface. Only called on `ALLOW`.
+7. **Output validator:** canary strings, configured secret patterns and redaction. This is an extra layer, not a guarantee.
+8. **Audit log and dashboard:** security events stored in PostgreSQL and shown in a React + ECharts dashboard.
+
+### Design principles
+
+- **Fail closed:** if a required security component fails, the LLM is not called. The system returns a controlled `REVIEW`/`BLOCK` or an error.
+- **Untrusted content stays untrusted:** documents and retrieved content are sent separately from the user's instruction, with their source label (`retrieved_document`, `web_page`, ...).
+- **Privacy by default:** logs store request ID, risk score, decision, matched rule IDs, model score, latency and timestamp. Raw prompts are **not** stored unless explicitly enabled.
+- **Honest evaluation:** thresholds are tuned on validation data only. Results are reported on a frozen, untouched test set, comparing rules-only vs ML-only vs combined.
+- **Stable API contract:** one response shape for success and errors, with `request_id` always present.
+
+## Tech stack
+
+| Area | Tools |
+|---|---|
+| Backend | Python 3.11, FastAPI, Pydantic |
+| ML | scikit-learn (baseline), Hugging Face datasets / transformers  |
+| Database | PostgreSQL |
+| Frontend | React, Apache ECharts |
+| Testing | pytest |
+| DevOps | Git, GitHub, Docker |
+
+## Project structure
+
+```
+aegisllm/
+├── backend/
+│   ├── app/
+│   │   ├── main.py            # FastAPI app, request IDs, error handling
+│   │   ├── config.py          # config.yaml loading + validation
+│   │   ├── schemas.py         # API request/response contract
+│   │   └── core/
+│   │       ├── detector.py    # detector interface (currently a dummy)
+│   │       ├── risk_engine.py # risk score + decision (placeholder weights)
+│   │       └── llm_service.py # LLM interface (currently a stub)
+│   ├── ml/                    # training code and saved models (planned)
+│   ├── tests/                 # pytest tests
+│   ├── config.yaml            # weights, thresholds, failure policy, logging policy
+│   └── requirements.txt
+├── frontend/                  # React dashboard (planned)
+├── evaluation/                # test sets and evaluation scripts (planned)
+└── README.md
+```
+
+## Getting started
+
+**Requirements:** Python 3.11, Git
+
+```bash
+git clone https://github.com/<your-username>/aegisllm.git
+cd aegisllm/backend
+
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+pytest                           # run the tests
+uvicorn app.main:app --reload    # start the API
+```
+
+Open **http://127.0.0.1:8000/docs** to try the API in your browser.
+
+### Example request
+
+```bash
+curl -X POST http://127.0.0.1:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the capital of France?"}'
+```
+
+### Response contract
+
+```json
+{
+  "request_id": "generated-unique-id",
+  "decision": "ALLOW",
+  "risk_score": 5,
+  "signals": {
+    "rules": [],
+    "ml_score": 0.05,
+    "obfuscation_score": 0
+  },
+  "response": "...",
+  "error": null
+}
+```
+
+| Decision | Meaning | LLM called? |
+|---|---|---|
+| `ALLOW` | Low risk | Yes |
+| `REVIEW` | Medium risk, review required | No |
+| `BLOCK` | High risk | No |
+
+Errors use the same shape, with `error` set and `request_id` always present. Request IDs are generated by the server. The example values above are illustrative and not calibrated.
+
+## Configuration
+
+All settings live in `backend/config.yaml` and are **validated at startup**. The app will not start with an invalid config (for example, weights that don't sum to 1, or `review_min >= block_min`). Settings for features that are not built yet are marked `NOT IMPLEMENTED YET` in the file.
+
+## Limitations
+
+AegisLLM reduces risk but does not guarantee safety. No detector catches every attack, and output validation cannot identify every leak. Treat it as one layer in a defense-in-depth setup.
+
+## Team
+
+- _Name 1_SYED SAMEENA TASLEEM (23AG1A7257)
+- _Name 2_MOHANA VENKATA MAHATHI TOLETI (23AG1A7243)
+- _Name 3_K NUTHAN SAI (23AG1A7222)
+_B.Tech final-year project, Department of AI & Data Science._ACE ENGINEERING COLLEGE
+
