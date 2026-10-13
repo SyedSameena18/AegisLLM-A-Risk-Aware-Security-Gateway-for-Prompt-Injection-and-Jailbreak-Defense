@@ -1,4 +1,4 @@
-# **AegisLLM: A Risk-Aware Security Gateway for Prompt Injection and Jailbreak Defense**
+# AegisLLM: A Risk-Aware Security Gateway for Prompt Injection and Jailbreak Defense
 
 **A risk-aware security gateway that protects LLM applications from prompt injection and jailbreak attacks.**
 
